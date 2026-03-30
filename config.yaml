@@ -1,0 +1,23 @@
+tag_rules:
+  claude-code:
+    - "claude code"
+    - "claude-code"
+  mcp:
+    - "mcp"
+    - "model context protocol"
+  cowork:
+    - "cowork"
+    - "claude desktop"
+  prompting:
+    - "prompt engineering"
+    - "system prompt"
+    - "prompting"
+  ai-agents:
+    - "ai agent"
+    - "multi-agent"
+    - "agentic"
+  setup:
+    - "setup"
+    - "install"
+    - "getting started"
+    - "configuration"

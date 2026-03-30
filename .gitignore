@@ -1,0 +1,13 @@
+data/*.db
+data/exports/*.json
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.claude/settings.local.json
+.claude/launch.json
+.coverage
+docs/

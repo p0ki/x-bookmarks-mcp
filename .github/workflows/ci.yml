@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install linters
+        run: pip install ruff black isort
+
+      - name: Run ruff
+        run: ruff check src/ tests/
+
+      - name: Run black
+        run: black --check src/ tests/
+
+      - name: Run isort
+        run: isort --check-only src/ tests/
+
+  scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit
+
+      - name: Private data scan
+        run: python scripts/check_private_data.py
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest-cov
+
+      - name: Run tests
+        run: pytest --cov=src --cov-fail-under=80 -v
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, scan, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t xbookmarks-mcp .
+
+      - name: Verify image starts
+        run: |
+          set +e
+          output=$(timeout 5 docker run --rm xbookmarks-mcp 2>&1)
+          rc=$?
+          echo "$output"
+          echo "$output" | grep -q "Starting"
+          if [ $? -ne 0 ] && [ $rc -ne 124 ]; then
+            echo "ERROR: Image failed to start"
+            exit 1
+          fi

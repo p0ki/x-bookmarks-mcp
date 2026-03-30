@@ -1,0 +1,121 @@
+[
+  {
+    "rest_id": "1001",
+    "legacy": {
+      "full_text": "Just discovered Claude Code MCP servers. Game changer for local AI workflows!",
+      "created_at": "Sat Mar 15 10:30:00 +0000 2026",
+      "entities": {
+        "urls": []
+      },
+      "in_reply_to_status_id_str": null
+    },
+    "core": {
+      "user_results": {
+        "result": {
+          "legacy": {
+            "screen_name": "aidev_jane",
+            "name": "Jane AI Dev"
+          }
+        }
+      }
+    }
+  },
+  {
+    "rest_id": "1002",
+    "legacy": {
+      "full_text": "Thread on setting up MCP servers \ud83e\uddf5\n\n1/ First, install the mcp Python SDK...",
+      "created_at": "Sun Mar 16 14:00:00 +0000 2026",
+      "entities": {
+        "urls": []
+      },
+      "in_reply_to_status_id_str": "1002"
+    },
+    "core": {
+      "user_results": {
+        "result": {
+          "legacy": {
+            "screen_name": "mcp_builder",
+            "name": "MCP Builder"
+          }
+        }
+      }
+    }
+  },
+  {
+    "rest_id": "1003",
+    "legacy": {
+      "full_text": "Great article on prompt engineering techniques https://t.co/abc123",
+      "created_at": "Mon Mar 17 09:15:00 +0000 2026",
+      "entities": {
+        "urls": [
+          {
+            "expanded_url": "https://example.com/prompt-engineering-guide",
+            "display_url": "example.com/prompt-engin..."
+          }
+        ]
+      },
+      "in_reply_to_status_id_str": null
+    },
+    "core": {
+      "user_results": {
+        "result": {
+          "legacy": {
+            "screen_name": "promptmaster",
+            "name": "Prompt Master"
+          }
+        }
+      }
+    }
+  },
+  {
+    "rest_id": "1004",
+    "legacy": {
+      "full_text": "Two must-read resources on multi-agent AI systems https://t.co/def456 https://t.co/ghi789",
+      "created_at": "Tue Mar 18 16:45:00 +0000 2026",
+      "entities": {
+        "urls": [
+          {
+            "expanded_url": "https://example.com/multi-agent-guide",
+            "display_url": "example.com/multi-agent..."
+          },
+          {
+            "expanded_url": "https://github.com/example/agent-framework",
+            "display_url": "github.com/example/agent..."
+          }
+        ]
+      },
+      "in_reply_to_status_id_str": null
+    },
+    "core": {
+      "user_results": {
+        "result": {
+          "legacy": {
+            "screen_name": "ai_researcher",
+            "name": "AI Researcher"
+          }
+        }
+      }
+    }
+  },
+  {
+    "rest_id": "1005",
+    "legacy": {
+      "full_text": "Home lab docker setup with unraid is surprisingly easy. Self-hosted AI is the future.",
+      "created_at": "Wed Mar 19 11:00:00 +0000 2026",
+      "entities": {
+        "urls": []
+      },
+      "in_reply_to_status_id_str": null
+    },
+    "core": {
+      "user_results": {
+        "result": {
+          "legacy": {
+            "screen_name": "homelab_pro",
+            "name": "HomeLab Pro"
+          }
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,8 @@
+services:
+  xbookmarks-cli:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    entrypoint: ["python", "-m", "src.ingest"]
+    profiles: ["cli"]
