@@ -37,6 +37,7 @@ def detect_format(filepath: Path) -> str:
 
     return "unknown"
 
+
 def _parse_datetime(date_str: str) -> datetime:
     """Parse both old Twitter format and the new flat X export format."""
     if not date_str:
