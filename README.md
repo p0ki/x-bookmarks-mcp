@@ -1,10 +1,29 @@
 # x-bookmarks-mcp
 
-Fully local, privacy-first MCP server that turns your X (Twitter) bookmarks into a searchable, enriched knowledge base for Claude.
+Fully local, privacy-first MCP server that turns exported X/Twitter bookmarks into a searchable, enriched knowledge base for Claude Desktop and Claude Code.
+
+This project explores how personal knowledge, local-first data, and MCP tooling can make AI assistants more useful without sending private bookmark data to third-party services.
 
 [![CI](https://github.com/p0ki/x-bookmarks-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/p0ki/x-bookmarks-mcp/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## Why I Built This
+
+I save a lot of useful posts, threads, tools, and ideas on X, but bookmarks quickly become a black hole: easy to save, hard to find, and almost impossible to turn into something useful later.
+
+I wanted a local system that could import my exported bookmarks, enrich linked content, tag topics automatically, and expose everything to Claude through MCP — while keeping the data private and under my control.
+
+This project helped me practice MCP server design, local-first tooling, SQLite full-text search, Docker workflows, async enrichment, private data handling, and AI-assisted knowledge management.
+
+## Portfolio Highlights
+
+- **Local-first AI tooling:** no X API keys, no telemetry, no third-party bookmark database.
+- **MCP integration:** exposes 8 tools for Claude Desktop / Claude Code to search, browse, tag, and summarize bookmarks.
+- **Searchable knowledge base:** SQLite + FTS5 full-text search across bookmark text, thread text, notes, tags, and enriched URLs.
+- **Async enrichment:** fetches linked pages and extracts readable content for better search and summarization.
+- **Docker support:** can run locally or through Docker/Docker Compose.
+- **Quality checks:** tests, coverage target, formatting/linting commands, and private data scanner.
 
 ## What it does
 
