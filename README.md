@@ -73,6 +73,42 @@ Add to your `claude_desktop_config.json`:
 
 Replace `/absolute/path/to/x-bookmarks-mcp` with the full path to your clone.
 
+### OpenClaw setup
+
+OpenClaw can launch the same local stdio server from your checked-out directory:
+
+```bash
+openclaw mcp add xbookmarks \
+  --command python \
+  --arg -m \
+  --arg src.server \
+  --cwd /absolute/path/to/x-bookmarks-mcp
+openclaw mcp doctor xbookmarks --probe
+openclaw mcp tools xbookmarks
+```
+
+Keep the bookmark export, SQLite database, and `config.yaml` on your machine.
+Use an absolute `--cwd` path because MCP hosts often launch tools from a
+different working directory.
+
+### Optional X/Twitter follow-up
+
+`x-bookmarks-mcp` remains the local-first source for bookmark search,
+tagging, notes, and summaries. If a bookmark review leads to account-scoped
+X/Twitter work outside the local archive, keep that in a separate OpenClaw
+plugin:
+
+```bash
+openclaw plugins install npm:@xquik/tweetclaw@1.6.31
+openclaw plugins inspect tweetclaw --runtime --json
+```
+
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw) can handle user lookup,
+follower export, search tweets, search tweet replies, media download, monitors,
+webhooks, giveaway draw evidence, and approval-reviewed post or reply jobs.
+Keep TweetClaw credentials in its plugin config, while raw bookmark exports and
+the local bookmark database stay in this project.
+
 ## Installation
 
 ```bash
