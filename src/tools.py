@@ -5,10 +5,17 @@ capabilities over the local bookmark database.
 """
 
 import logging
+import os
+from datetime import datetime
 
+import httpx
 from src.db import Database
+from src.models import Bookmark
 
 logger = logging.getLogger(__name__)
+
+XQUIK_BASE_URL = os.environ.get("XQUIK_BASE_URL", "https://xquik.com").rstrip("/")
+XQUIK_TIMEOUT_SECONDS = float(os.environ.get("XQUIK_TIMEOUT_SECONDS", "30"))
 
 
 def _full_bookmark(db: Database, bookmark_id: str) -> dict | None:
@@ -35,6 +42,120 @@ def search_bookmarks(
     Returns ranked results with snippets.
     """
     return db.search(query, tag, limit)
+
+
+# --- Tool 1b: import_xquik_search ---
+
+
+def _xquik_headers() -> dict[str, str]:
+    api_key = os.environ.get("XQUIK_API_KEY", "").strip()
+    return {"x-api-key": api_key} if api_key else {}
+
+
+def _as_record(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _tweet_candidates(payload: object) -> list:
+    if isinstance(payload, list):
+        return payload
+    record = _as_record(payload)
+    for key in ("tweets", "data", "results", "items"):
+        value = record.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _tweet_value(tweet: dict, *keys: str) -> str:
+    for key in keys:
+        value = tweet.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _tweet_author(tweet: dict) -> tuple[str, str]:
+    author = _as_record(tweet.get("author") or tweet.get("user"))
+    username = _tweet_value(author, "username", "screen_name", "handle")
+    username = username.lstrip("@") or "unknown"
+    name = _tweet_value(author, "name", "display_name") or username
+    return username, name
+
+
+def _tweet_created_at(tweet: dict) -> datetime:
+    value = _tweet_value(tweet, "created_at", "createdAt", "created_time")
+    if not value:
+        return datetime.now()
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return datetime.now()
+
+
+def import_xquik_search(
+    db: Database,
+    query: str,
+    tag: str = "xquik",
+    limit: int = 10,
+    query_type: str = "Latest",
+) -> dict:
+    """Import public X search results from Xquik into the bookmark database."""
+    stripped_query = query.strip()
+    if not stripped_query:
+        return {"error": "query is required"}
+
+    safe_limit = max(1, min(limit, 100))
+    with httpx.Client(timeout=XQUIK_TIMEOUT_SECONDS) as client:
+        response = client.get(
+            f"{XQUIK_BASE_URL}/api/v1/x/tweets/search",
+            headers=_xquik_headers(),
+            params={
+                "q": stripped_query,
+                "queryType": query_type,
+                "limit": safe_limit,
+            },
+        )
+    if response.status_code >= 400:
+        return {
+            "error": "Xquik search failed",
+            "status_code": response.status_code,
+            "details": response.text,
+        }
+
+    payload = response.json()
+    imported = 0
+    skipped = 0
+    for candidate in _tweet_candidates(payload):
+        tweet = _as_record(candidate)
+        tweet_id = _tweet_value(tweet, "id", "tweetId", "rest_id")
+        tweet_text = _tweet_value(tweet, "text", "full_text", "content")
+        if not tweet_id or not tweet_text:
+            skipped += 1
+            continue
+        username, author_name = _tweet_author(tweet)
+        db.insert_bookmark(
+            Bookmark(
+                id=tweet_id,
+                author_username=username,
+                author_name=author_name,
+                tweet_text=tweet_text,
+                tweet_url=f"https://x.com/{username}/status/{tweet_id}",
+                created_at=_tweet_created_at(tweet),
+            )
+        )
+        if tag:
+            db.add_tag(tweet_id, tag)
+        imported += 1
+
+    db.rebuild_fts()
+    return {
+        "query": stripped_query,
+        "tag": tag,
+        "query_type": query_type,
+        "imported": imported,
+        "skipped": skipped,
+    }
 
 
 # --- Tool 2: list_tags ---
@@ -168,7 +289,7 @@ def summarize_topic(
             if bm_full and bm_full.get("thread_text"):
                 entry["thread_text"] = bm_full["thread_text"][:1000]
         else:
-            # "guide" — full content
+            # "guide" - full content
             full = _full_bookmark(db, bid)
             if full:
                 if full.get("thread_text"):
