@@ -93,6 +93,15 @@ def _tweet_created_at(tweet: dict) -> datetime:
         return datetime.now()
 
 
+def _optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def import_xquik_search(
     db: Database,
     query: str,
@@ -134,6 +143,7 @@ def import_xquik_search(
             skipped += 1
             continue
         username, author_name = _tweet_author(tweet)
+        existing = db.get_bookmark(tweet_id)
         db.insert_bookmark(
             Bookmark(
                 id=tweet_id,
@@ -142,6 +152,11 @@ def import_xquik_search(
                 tweet_text=tweet_text,
                 tweet_url=f"https://x.com/{username}/status/{tweet_id}",
                 created_at=_tweet_created_at(tweet),
+                bookmarked_at=_optional_datetime(
+                    existing.get("bookmarked_at") if existing else None
+                ),
+                is_thread=bool(existing.get("is_thread")) if existing else False,
+                thread_text=existing.get("thread_text") if existing else None,
             )
         )
         if tag:

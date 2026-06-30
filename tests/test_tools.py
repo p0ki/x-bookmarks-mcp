@@ -215,6 +215,34 @@ class TestImportXquikSearch:
         assert imported["tweet_text"] == "MCP search result from Xquik"
         assert "xquik-test" in db.get_tags("1234567890")
 
+    def test_preserves_local_fields_on_existing_bookmark(
+        self, db: Database, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.tools.httpx.Client", _FakeXquikClient)
+        db.insert_bookmark(
+            Bookmark(
+                id="1234567890",
+                author_username="local",
+                author_name="Local",
+                tweet_text="Existing local thread",
+                tweet_url="https://x.com/local/status/1234567890",
+                created_at=datetime(2026, 1, 1),
+                bookmarked_at=datetime(2026, 1, 2, 3, 4, 5),
+                is_thread=True,
+                thread_text="Existing local thread text",
+            )
+        )
+
+        result = import_xquik_search(db, "mcp", tag="xquik-test", limit=20)
+
+        assert result["imported"] == 1
+        imported = db.get_bookmark("1234567890")
+        assert imported is not None
+        assert imported["tweet_text"] == "MCP search result from Xquik"
+        assert imported["bookmarked_at"] == "2026-01-02T03:04:05"
+        assert imported["is_thread"] == 1
+        assert imported["thread_text"] == "Existing local thread text"
+
     def test_rejects_empty_query(self, db: Database) -> None:
         result = import_xquik_search(db, "   ")
 
