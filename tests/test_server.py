@@ -1,4 +1,4 @@
-"""Tests for src/server.py — MCP server wiring and tool delegation."""
+"""Tests for src/server.py - MCP server wiring and tool delegation."""
 
 import inspect
 from datetime import datetime
@@ -15,6 +15,7 @@ from src.models import Bookmark
 
 EXPECTED_TOOLS = {
     "tool_search_bookmarks",
+    "tool_import_xquik_search",
     "tool_list_tags",
     "tool_get_bookmark",
     "tool_browse_by_tag",
@@ -87,14 +88,14 @@ class TestModuleImport:
 
 
 class TestToolRegistration:
-    def test_all_eight_tools_registered(self) -> None:
-        """All 8 tool_* functions are registered on the FastMCP instance."""
+    def test_all_nine_tools_registered(self) -> None:
+        """All 9 tool_* functions are registered on the FastMCP instance."""
         registered = set(server_module.mcp._tool_manager._tools.keys())
         assert EXPECTED_TOOLS == registered
 
-    def test_tool_count_is_exactly_eight(self) -> None:
+    def test_tool_count_is_exactly_nine(self) -> None:
         registered = server_module.mcp._tool_manager._tools
-        assert len(registered) == 8
+        assert len(registered) == 9
 
     @pytest.mark.parametrize("tool_name", sorted(EXPECTED_TOOLS))
     def test_individual_tool_registered(self, tool_name: str) -> None:
@@ -131,7 +132,7 @@ class TestDbLazyInit:
         """If _db is already set, _get_db() returns it without creating a new one."""
         existing_db = Database(str(tmp_path / "existing.db"))
         monkeypatch.setattr(server_module, "_db", existing_db)
-        # DB_PATH points somewhere different — should never be opened
+        # DB_PATH points somewhere different - should never be opened
         monkeypatch.setattr(
             server_module, "DB_PATH", str(tmp_path / "should_not_open.db")
         )
@@ -152,7 +153,7 @@ class TestDbLazyInit:
 
 
 # ---------------------------------------------------------------------------
-# 4. Integration tests — tool functions delegate to src.tools
+# 4. Integration tests - tool functions delegate to src.tools
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +183,7 @@ class TestToolSearchBookmarks:
         results = server_module.tool_search_bookmarks("MCP", tag="python")
         ids = [r["id"] for r in results]
         assert "tweet_002" in ids
-        # tweet_001 has no 'python' tag — should not appear when tag filter active
+        # tweet_001 has no 'python' tag - should not appear when tag filter active
         assert "tweet_001" not in ids
 
     def test_returns_list_of_dicts(self, patched_db) -> None:
@@ -349,6 +350,7 @@ class TestToolSignatures:
         "func_name,expected_params",
         [
             ("tool_search_bookmarks", ["query", "tag", "limit"]),
+            ("tool_import_xquik_search", ["query", "tag", "limit", "query_type"]),
             ("tool_list_tags", []),
             ("tool_get_bookmark", ["bookmark_id"]),
             ("tool_browse_by_tag", ["tag", "limit"]),
@@ -383,7 +385,7 @@ class TestToolSignatures:
         assert hints.get("return") is dict
 
     def test_list_tags_return_annotation_is_list(self) -> None:
-        # The annotation is list[dict] — verify it is a list-origin generic.
+        # The annotation is list[dict] - verify it is a list-origin generic.
         hints = server_module.tool_list_tags.__annotations__
         return_hint = hints.get("return")
         assert return_hint is not None

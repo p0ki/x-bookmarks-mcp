@@ -12,6 +12,7 @@ from src.tools import (
     browse_by_tag,
     get_bookmark,
     get_stats,
+    import_xquik_search,
     list_tags,
     search_bookmarks,
     summarize_topic,
@@ -67,7 +68,7 @@ def _link(
 def seeded_db(db: Database) -> Database:
     """DB seeded with 5 bookmarks covering diverse scenarios."""
 
-    # bm1 — Python article with link + tags
+    # bm1 - Python article with link + tags
     db.insert_bookmark(_bm("bm1", "Python async is amazing for IO-bound tasks"))
     db.insert_link(
         _link(
@@ -80,7 +81,7 @@ def seeded_db(db: Database) -> Database:
     db.add_tag("bm1", "python")
     db.add_tag("bm1", "async")
 
-    # bm2 — thread about machine learning
+    # bm2 - thread about machine learning
     db.insert_bookmark(
         _bm(
             "bm2",
@@ -91,7 +92,7 @@ def seeded_db(db: Database) -> Database:
     db.add_tag("bm2", "ml")
     db.add_tag("bm2", "python")
 
-    # bm3 — bookmark with notes and a link
+    # bm3 - bookmark with notes and a link
     db.insert_bookmark(
         _bm(
             "bm3",
@@ -110,13 +111,13 @@ def seeded_db(db: Database) -> Database:
     db.add_tag("bm3", "devops")
     db.add_tag("bm3", "docker")
 
-    # bm4 — security article
+    # bm4 - security article
     db.insert_bookmark(
         _bm("bm4", "SQL injection prevention techniques", author_username="secauthor")
     )
     db.add_tag("bm4", "security")
 
-    # bm5 — unicode and long content, no tags, no links
+    # bm5 - unicode and long content, no tags, no links
     db.insert_bookmark(_bm("bm5", "Slovenian language unicode test: čšž 🚀"))
 
     # Rebuild FTS so searches work
@@ -166,6 +167,86 @@ class TestSearchBookmarks:
         row = result[0]
         for key in ("id", "author_username", "tweet_text", "tweet_url", "created_at"):
             assert key in row
+
+
+class _FakeXquikResponse:
+    status_code = 200
+    text = ""
+
+    def json(self) -> dict:
+        return {
+            "tweets": [
+                {
+                    "id": "1234567890",
+                    "text": "MCP search result from Xquik",
+                    "created_at": "2026-06-30T00:00:00Z",
+                    "author": {"username": "xquik", "name": "Xquik"},
+                }
+            ]
+        }
+
+
+class _FakeXquikClient:
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def __enter__(self) -> "_FakeXquikClient":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def get(self, *_args: object, **_kwargs: object) -> _FakeXquikResponse:
+        return _FakeXquikResponse()
+
+
+class TestImportXquikSearch:
+    def test_imports_xquik_results_as_bookmarks(
+        self, db: Database, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.tools.httpx.Client", _FakeXquikClient)
+
+        result = import_xquik_search(db, "mcp", tag="xquik-test", limit=20)
+
+        assert result["imported"] == 1
+        imported = db.get_bookmark("1234567890")
+        assert imported is not None
+        assert imported["author_username"] == "xquik"
+        assert imported["tweet_text"] == "MCP search result from Xquik"
+        assert "xquik-test" in db.get_tags("1234567890")
+
+    def test_preserves_local_fields_on_existing_bookmark(
+        self, db: Database, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.tools.httpx.Client", _FakeXquikClient)
+        db.insert_bookmark(
+            Bookmark(
+                id="1234567890",
+                author_username="local",
+                author_name="Local",
+                tweet_text="Existing local thread",
+                tweet_url="https://x.com/local/status/1234567890",
+                created_at=datetime(2026, 1, 1),
+                bookmarked_at=datetime(2026, 1, 2, 3, 4, 5),
+                is_thread=True,
+                thread_text="Existing local thread text",
+            )
+        )
+
+        result = import_xquik_search(db, "mcp", tag="xquik-test", limit=20)
+
+        assert result["imported"] == 1
+        imported = db.get_bookmark("1234567890")
+        assert imported is not None
+        assert imported["tweet_text"] == "MCP search result from Xquik"
+        assert imported["bookmarked_at"] == "2026-01-02T03:04:05"
+        assert imported["is_thread"] == 1
+        assert imported["thread_text"] == "Existing local thread text"
+
+    def test_rejects_empty_query(self, db: Database) -> None:
+        result = import_xquik_search(db, "   ")
+
+        assert result == {"error": "query is required"}
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +629,7 @@ class TestSummarizeTopic:
     # --- tag-based vs search fallback ---
 
     def test_tag_based_lookup_used_when_tag_exists(self, seeded_db: Database) -> None:
-        # "python" is a known tag — should use browse_by_tag path
+        # "python" is a known tag - should use browse_by_tag path
         result = summarize_topic(seeded_db, "python")
         assert result["count"] > 0
 

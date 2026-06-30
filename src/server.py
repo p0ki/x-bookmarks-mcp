@@ -16,6 +16,7 @@ from src.tools import (
     browse_by_tag,
     get_bookmark,
     get_stats,
+    import_xquik_search,
     list_tags,
     search_bookmarks,
     summarize_topic,
@@ -27,7 +28,7 @@ DB_PATH = os.environ.get("DB_PATH", "./data/bookmarks.db")
 
 mcp = FastMCP("x-bookmarks-mcp")
 
-# Lazy-initialised database — created on first tool call.
+# Lazy-initialised database - created on first tool call.
 _db: Database | None = None
 
 
@@ -58,6 +59,24 @@ def tool_search_bookmarks(
         limit: Maximum number of results (default 10).
     """
     return search_bookmarks(_get_db(), query, tag, limit)
+
+
+@mcp.tool()
+def tool_import_xquik_search(
+    query: str,
+    tag: str = "xquik",
+    limit: int = 10,
+    query_type: str = "Latest",
+) -> dict:
+    """Import public X search results from Xquik.
+
+    Args:
+        query: Search query string.
+        tag: Tag to attach to imported results.
+        limit: Maximum number of results to import. Min 1, max 100.
+        query_type: Xquik query type, usually 'Latest' or 'Top'.
+    """
+    return import_xquik_search(_get_db(), query, tag, limit, query_type)
 
 
 # --- Tool 2: list_tags ---
