@@ -1,8 +1,8 @@
 # x-bookmarks-mcp
 
-Fully local, privacy-first MCP server that turns exported X/Twitter bookmarks into a searchable, enriched knowledge base for Claude Desktop and Claude Code.
+Local-first, privacy-focused MCP server that turns exported X/Twitter bookmarks into a searchable, enriched knowledge base for Claude Desktop, Claude Code, and other MCP clients.
 
-This project explores how personal knowledge, local-first data, and MCP tooling can make AI assistants more useful without sending private bookmark data to third-party services.
+The bookmark database, notes, tags, and search index stay local. Optional enrichment makes outbound requests to public links contained in the export so their readable text can be indexed.
 
 [![CI](https://github.com/p0ki/x-bookmarks-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/p0ki/x-bookmarks-mcp/actions/workflows/ci.yml)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
@@ -10,54 +10,83 @@ This project explores how personal knowledge, local-first data, and MCP tooling 
 
 ## Why I Built This
 
-I save a lot of useful posts, threads, tools, and ideas on X, but bookmarks quickly become a black hole: easy to save, hard to find, and almost impossible to turn into something useful later.
+X bookmarks are easy to save and difficult to reuse. This project turns an exported bookmark collection into a local knowledge base that can be searched, tagged, annotated, enriched, and exposed through MCP.
 
-I wanted a local system that could import my exported bookmarks, enrich linked content, tag topics automatically, and expose everything to Claude through MCP — while keeping the data private and under my control.
+The project is intentionally small: SQLite is the source of the local index, FTS5 provides search, Python handles import/enrichment, and the MCP server exposes a bounded tool surface.
 
-This project helped me practice MCP server design, local-first tooling, SQLite full-text search, Docker workflows, async enrichment, private data handling, and AI-assisted knowledge management.
+## Highlights
 
-## Portfolio Highlights
+- **Local-first storage** — SQLite database and bookmark data stay on your machine.
+- **No X API dependency** — import from JSON exports instead of requiring X API credentials.
+- **MCP integration** — eight tools for search, browsing, notes, tags, stats, and topic synthesis.
+- **Full-text search** — tweet text, exported thread/article text, notes, tags, and enriched linked content.
+- **Incremental imports** — unchanged bookmarks are skipped; changed exports update existing records.
+- **X Article preservation** — if the exporter includes article title/body/URL, that content is stored locally as an `x-article` link.
+- **Bounded enrichment** — public HTTP(S) links only, redirect validation, response-size limits, timeouts, and content extraction.
+- **Docker + CI** — non-root container, linting, tests, coverage, dependency audit, secret scan, private-data scan, and Docker validation.
 
-- **Local-first AI tooling:** no X API keys, no telemetry, no third-party bookmark database.
-- **MCP integration:** exposes 8 tools for Claude Desktop / Claude Code to search, browse, tag, and summarize bookmarks.
-- **Searchable knowledge base:** SQLite + FTS5 full-text search across bookmark text, thread text, notes, tags, and enriched URLs.
-- **Async enrichment:** fetches linked pages and extracts readable content for better search and summarization.
-- **Docker support:** can run locally or through Docker/Docker Compose.
-- **Quality checks:** tests, coverage target, formatting/linting commands, and private data scanner.
+## Security Model
 
-## What it does
+URL enrichment processes untrusted links, so the fetcher:
 
-- **100% offline** — no X API keys, no third-party services, no telemetry
-- **Full-text search** across tweet text, threads, linked page content, notes, and tags
-- **Auto-enrichment** — fetches and extracts content from URLs in your bookmarks
-- **MCP integration** — 8 tools available to Claude for searching, browsing, tagging, and summarizing
+- accepts only `http://` and `https://`;
+- rejects loopback, private, link-local, multicast, reserved, and other non-public IP destinations;
+- validates redirect targets before following them;
+- limits redirects to five hops;
+- streams responses with a configurable hard byte limit;
+- accepts text/HTML-style responses only;
+- applies request timeouts and a descriptive User-Agent.
+
+This is defense in depth for a local enrichment tool. Do not expose the MCP server or its data directory directly to the public Internet.
+
+## Current Limits
+
+- The project does **not** log into X or scrape authenticated X pages.
+- Full X Article text is available only when the bookmark exporter includes that article content. A raw X Article URL by itself may not be enrichable without an authenticated browser/session.
+- A bookmark marked as a reply can be identified as thread-related, but reconstructing an entire X conversation requires the exporter to include the conversation content.
+- SQLite is intended for a personal/local collection, not multi-user hosted service use.
 
 ## Quick Start
 
-### 1. Export your bookmarks
+### 1. Export bookmarks
 
-Use a browser extension like [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) to export your X bookmarks as JSON.
+Export X bookmarks to JSON and save the file under `data/exports/`, for example:
 
-Save the export to `data/exports/bookmarks.json`.
+```text
+data/exports/bookmarks.json
+```
 
 ### 2. Install
 
 ```bash
 git clone https://github.com/p0ki/x-bookmarks-mcp.git
 cd x-bookmarks-mcp
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Import and enrich
+### 3. Import and optionally enrich
 
 ```bash
 python -m src import data/exports/bookmarks.json
 python -m src enrich
+python -m src stats
 ```
 
-### 4. Connect to Claude
+Re-running import is safe:
 
-Add to your `claude_desktop_config.json`:
+- new bookmark → added;
+- changed bookmark/export metadata → updated;
+- unchanged bookmark → skipped.
+
+### 4. Run the MCP server
+
+```bash
+python -m src.server
+```
+
+Example MCP client configuration:
 
 ```json
 {
@@ -71,176 +100,102 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Replace `/absolute/path/to/x-bookmarks-mcp` with the full path to your clone.
-
-## Installation
-
-```bash
-git clone https://github.com/p0ki/x-bookmarks-mcp.git
-cd x-bookmarks-mcp
-pip install -r requirements.txt
-```
-
-Requires Python 3.11 or higher. All dependencies are listed in `requirements.txt`.
-
-## Usage
-
-### CLI Commands
-
-```bash
-# Import bookmarks from JSON export
-python -m src import data/exports/bookmarks.json
-
-# Fetch and extract content from URLs in bookmarks
-python -m src enrich
-
-# Re-fetch already-enriched bookmarks
-python -m src enrich --refresh
-
-# Re-run auto-tagging on all bookmarks
-python -m src retag
-
-# Show collection statistics
-python -m src stats
-
-# Enable verbose logging
-python -m src -v import data/exports/bookmarks.json
-```
-
-### MCP Server
-
-```bash
-python -m src.server
-```
-
-The server runs over stdio and is designed to be launched by Claude Desktop or Claude Code.
-
 ## Docker
 
-### Build the image
+Build:
 
 ```bash
 docker build -t xbookmarks-mcp .
 ```
 
-### Run MCP server via Docker
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "xbookmarks": {
-      "command": "docker",
-      "args": [
-        "run", "--rm", "-i",
-        "-v", "/absolute/path/to/xbookmarks/data:/app/data",
-        "-v", "/absolute/path/to/xbookmarks/config.yaml:/app/config.yaml:ro",
-        "xbookmarks-mcp"
-      ]
-    }
-  }
-}
-```
-
-Replace `/absolute/path/to/xbookmarks` with the full path to your local clone. Relative paths do not work here because Claude Desktop launches the container from its own working directory.
-
-### CLI via Docker Compose
+Run the MCP server over stdio:
 
 ```bash
-# Import bookmarks
+docker run --rm -i \
+  -v "$PWD/data:/app/data" \
+  -v "$PWD/config.yaml:/app/config.yaml:ro" \
+  xbookmarks-mcp
+```
+
+CLI through Docker Compose:
+
+```bash
 docker compose run --rm xbookmarks-cli import data/exports/bookmarks.json
-
-# Enrich bookmarks
 docker compose run --rm xbookmarks-cli enrich
-
-# Show stats
 docker compose run --rm xbookmarks-cli stats
 ```
 
-## How it works
+## How It Works
 
-```
-bookmarks.json ──▶ ingest ──▶ SQLite DB
-                                 │
-                            enrich (async)
-                            fetch URLs ──▶ extract content
-                                 │
-                            auto-tag (keyword rules)
-                                 │
-                         MCP server (stdio)
-                                 │
-                         Claude Desktop / Claude Code
+```text
+bookmark export
+      |
+      v
+  ingest.py
+      |
+      v
+ SQLite + FTS5 <---- notes / tags
+      |
+      +---- optional public URL enrichment
+      |
+      v
+ MCP server (stdio)
+      |
+      v
+ Claude / MCP client
 ```
 
-1. **Ingest** — parses your JSON export, stores bookmarks in SQLite with FTS5 full-text search
-2. **Enrich** — asynchronously fetches URLs from bookmarks, extracts readable content with trafilatura
-3. **Auto-tag** — applies keyword-based rules from `config.yaml` to categorize bookmarks
-4. **MCP Server** — exposes 8 tools over stdio for Claude to search, browse, and organize your bookmarks
+1. **Ingest** detects supported JSON formats and updates the local collection.
+2. **Embedded article content** is preserved when the export contains it.
+3. **Enrich** fetches bounded public linked-page content and extracts readable text.
+4. **Tagger** applies configurable keyword rules.
+5. **FTS5** indexes searchable fields; MCP writes rebuild the index immediately.
+6. **MCP** exposes a small read/write tool contract.
 
 ## MCP Tools
 
 | Tool | Description |
-|------|-------------|
-| `search_bookmarks` | Full-text search across all bookmark content |
-| `list_tags` | List all tags with bookmark counts |
-| `get_bookmark` | Get a single bookmark with full detail |
-| `browse_by_tag` | Browse bookmarks by tag, newest first |
-| `add_note` | Add or update a personal note on a bookmark |
-| `add_tag` | Add a tag to a bookmark (idempotent) |
-| `get_stats` | Collection overview — counts, tags, authors, enrichment status |
-| `summarize_topic` | Gather bookmarks on a topic for Claude to synthesize |
+|---|---|
+| `search_bookmarks` | Full-text search across bookmark content |
+| `list_tags` | List tags with bookmark counts |
+| `get_bookmark` | Get a bookmark with links, tags, and notes |
+| `browse_by_tag` | Browse tagged bookmarks, newest first |
+| `add_note` | Add or replace a local note |
+| `add_tag` | Add an idempotent normalized tag |
+| `get_stats` | Collection and enrichment statistics |
+| `summarize_topic` | Gather bounded content for MCP-client synthesis |
 
 ## Configuration
 
-### Environment Variables
-
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_PATH` | `./data/bookmarks.db` | Path to SQLite database |
-| `CONFIG_PATH` | `./config.yaml` | Path to config file |
-| `FETCH_DELAY_SECONDS` | `1.0` | Delay between URL fetches |
-| `FETCH_TIMEOUT_SECONDS` | `10` | Timeout for URL fetches |
-| `MAX_CONTENT_LENGTH` | `50000` | Maximum extracted content length |
+|---|---:|---|
+| `DB_PATH` | `./data/bookmarks.db` | SQLite database path |
+| `CONFIG_PATH` | `./config.yaml` | Tag configuration |
+| `FETCH_DELAY_SECONDS` | `1.0` | Delay between links for one bookmark |
+| `FETCH_TIMEOUT_SECONDS` | `10` | HTTP timeout |
+| `MAX_CONTENT_LENGTH` | `50000` | Maximum extracted text retained per link |
+| `MAX_RESPONSE_BYTES` | `5000000` | Maximum downloaded response size |
 
-### Tag Rules (config.yaml)
-
-```yaml
-tag_rules:
-  claude-code:
-    - "claude code"
-    - "claude-code"
-  mcp:
-    - "mcp"
-    - "model context protocol"
-```
-
-Bookmarks are automatically tagged when any keyword is found in the tweet text, thread text, or enriched page content.
+Tag rules live in `config.yaml`.
 
 ## Development
 
 ```bash
-# Clone
-git clone https://github.com/p0ki/x-bookmarks-mcp.git
-cd x-bookmarks-mcp
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run tests
 pytest -v
-
-# Run tests with coverage
 pytest --cov=src --cov-fail-under=80 -v
 
-# Lint
 ruff check src/ tests/
 black --check src/ tests/
 isort --check-only src/ tests/
 
-# Run private data scanner
 python scripts/check_private_data.py
 ```
+
+CI tests Python 3.11, 3.12, and 3.13 and also performs dependency, secret, privacy, Docker-image, and Docker-Compose checks.
+
+## Dependency Policy
+
+Runtime and development dependencies are pinned for reproducible CI/install behavior. The project intentionally remains on the supported MCP Python SDK **1.x** line until a deliberate MCP v2 migration is completed.
 
 ## License
 
