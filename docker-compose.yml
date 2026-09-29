@@ -4,5 +4,5 @@ services:
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro
-    entrypoint: ["python", "-m", "src.ingest"]
+    entrypoint: ["python", "-m", "src"]
     profiles: ["cli"]
