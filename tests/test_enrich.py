@@ -112,7 +112,9 @@ class TestUrlSafety:
     async def test_blocks_private_network(self) -> None:
         from src.enrich import _validate_public_url
 
-        assert await _validate_public_url("http://192.168.1.1/") is False  # noqa: private-data
+        assert (
+            await _validate_public_url("http://192.168.1.1/") is False
+        )  # private-data-ok
 
     @pytest.mark.asyncio
     async def test_blocks_non_http_scheme(self) -> None:
@@ -139,11 +141,13 @@ class TestFetchAndExtract:
         mock_meta = MagicMock()
         mock_meta.title = "My Page"
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with patch(
-                "src.enrich._validate_public_url",
-                new=AsyncMock(return_value=True),
-            ), patch("trafilatura.extract", return_value="Hello world"), patch(
-                "trafilatura.extract_metadata", return_value=mock_meta
+            with (
+                patch(
+                    "src.enrich._validate_public_url",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch("trafilatura.extract", return_value="Hello world"),
+                patch("trafilatura.extract_metadata", return_value=mock_meta),
             ):
                 title, content, _ctype = await _fetch_and_extract(
                     client,
@@ -196,11 +200,13 @@ class TestFetchAndExtract:
         mock_meta = MagicMock()
         mock_meta.title = "Long"
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with patch(
-                "src.enrich._validate_public_url",
-                new=AsyncMock(return_value=True),
-            ), patch("trafilatura.extract", return_value=long_text), patch(
-                "trafilatura.extract_metadata", return_value=mock_meta
+            with (
+                patch(
+                    "src.enrich._validate_public_url",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch("trafilatura.extract", return_value=long_text),
+                patch("trafilatura.extract_metadata", return_value=mock_meta),
             ):
                 _title, content, _ctype = await _fetch_and_extract(
                     client,
@@ -425,10 +431,13 @@ class TestEnrichAll:
         _insert(db, bm1)
         _insert(db, bm2)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Title", "Content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("Title", "Content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         assert result.enriched == 2
@@ -467,10 +476,13 @@ class TestEnrichAll:
         )
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("New Title", "New content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("New Title", "New content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db, refresh=True)
 
         # With refresh=True the bookmark was previously enriched but must be processed again
@@ -484,10 +496,13 @@ class TestEnrichAll:
         bm = _bm("401", urls=["https://broken.example.com"])
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=(None, None, "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=(None, None, "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         assert result.failed == 1
@@ -514,10 +529,15 @@ class TestEnrichAll:
         bm = _bm("601", urls=["https://example.com/fts"])
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("FTS Title", "Searchable content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(
+                    return_value=("FTS Title", "Searchable content.", "article")
+                ),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             with patch.object(db, "rebuild_fts", wraps=db.rebuild_fts) as mock_rebuild:
                 await enrich_all(db)
 
@@ -536,10 +556,13 @@ class TestEnrichAll:
         async def fake_sleep(seconds: float) -> None:
             sleep_calls.append(seconds)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("T", "C", "article")),
-        ), patch("asyncio.sleep", new=fake_sleep):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("T", "C", "article")),
+            ),
+            patch("asyncio.sleep", new=fake_sleep),
+        ):
             await enrich_all(db)
 
         # Sleep must occur between the 2 URL fetches
@@ -557,10 +580,15 @@ class TestEnrichAll:
         mock_tagger = MagicMock()
         mock_tagger.retag_all = MagicMock()
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Tagged Title", "Tagged content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(
+                    return_value=("Tagged Title", "Tagged content.", "article")
+                ),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db, tagger=mock_tagger)
 
         assert result.enriched == 1
@@ -585,8 +613,9 @@ class TestEnrichAll:
                 raise RuntimeError("unexpected network error")
             return ("OK Title", "OK Content.", "article")
 
-        with patch("src.enrich._fetch_and_extract", new=flaky_fetch), patch(
-            "asyncio.sleep", new=AsyncMock()
+        with (
+            patch("src.enrich._fetch_and_extract", new=flaky_fetch),
+            patch("asyncio.sleep", new=AsyncMock()),
         ):
             result = await enrich_all(db)
 
