@@ -112,7 +112,7 @@ class TestUrlSafety:
     async def test_blocks_private_network(self) -> None:
         from src.enrich import _validate_public_url
 
-        assert await _validate_public_url("http://192.168.1.1/") is False
+        assert await _validate_public_url("http://192.168.1.1/") is False  # noqa: private-data
 
     @pytest.mark.asyncio
     async def test_blocks_non_http_scheme(self) -> None:
@@ -384,7 +384,7 @@ class TestEnrichBookmark:
         bm = _bm("47", urls=["https://ok.example.com/a", "https://fail.example.com/b"])
         _insert(db, bm)
 
-        async def mock_fetch(client, url, max_length):
+        async def mock_fetch(client, url, max_length, max_response_bytes=5_000_000):
             if "ok" in url:
                 return ("Good Title", "Good content.", "article")
             return (None, None, "article")
@@ -578,7 +578,7 @@ class TestEnrichAll:
 
         call_count = 0
 
-        async def flaky_fetch(client, url, max_length):
+        async def flaky_fetch(client, url, max_length, max_response_bytes=5_000_000):
             nonlocal call_count
             call_count += 1
             if "crash" in url:
