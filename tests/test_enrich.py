@@ -454,10 +454,13 @@ class TestEnrichAll:
         _insert(db, already_done)
         _insert(db, fresh)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Title", "Content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("Title", "Content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         # "201" is already enriched — should be counted as skipped
