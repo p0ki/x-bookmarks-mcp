@@ -50,9 +50,7 @@ def import_cmd(filepath: Path) -> None:
 @click.option("--refresh", is_flag=True, help="Re-fetch already-enriched bookmarks.")
 def enrich(refresh: bool) -> None:
     """Fetch URL content for all bookmarks."""
-    result = asyncio.run(
-        enrich_all(_get_db(), tagger=_get_tagger(), refresh=refresh)
-    )
+    result = asyncio.run(enrich_all(_get_db(), tagger=_get_tagger(), refresh=refresh))
     click.echo(
         f"Enrichment complete: {result.enriched} enriched, "
         f"{result.failed} failed, {result.skipped} skipped"
@@ -86,9 +84,7 @@ def stats() -> None:
     if s.get("top_authors"):
         click.echo("Top authors:")
         for author in s["top_authors"][:5]:
-            click.echo(
-                f"  @{author['author_username']}: {author['count']} bookmarks"
-            )
+            click.echo(f"  @{author['author_username']}: {author['count']} bookmarks")
     if s.get("tags"):
         click.echo("Tags:")
         for tag in s["tags"]:
