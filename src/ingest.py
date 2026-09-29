@@ -53,12 +53,7 @@ def _parse_datetime(date_str: str) -> datetime:
 
 
 def _entry_id(entry: dict) -> str:
-    return str(
-        entry.get("rest_id")
-        or entry.get("id_str")
-        or entry.get("id")
-        or ""
-    )
+    return str(entry.get("rest_id") or entry.get("id_str") or entry.get("id") or "")
 
 
 def _extract_user(entry: dict) -> tuple[str, str]:
@@ -157,15 +152,11 @@ def _extract_embedded_article(entry: dict) -> dict | None:
 
     meta = entry.get("metadata", {})
     article_result = (
-        meta.get("article", {})
-        .get("article_results", {})
-        .get("result", {})
+        meta.get("article", {}).get("article_results", {}).get("result", {})
     )
     if not article_result:
         article_result = (
-            entry.get("article", {})
-            .get("article_results", {})
-            .get("result", {})
+            entry.get("article", {}).get("article_results", {}).get("result", {})
         )
 
     if article_result:
@@ -199,9 +190,7 @@ def _parse_entry(entry: dict) -> Bookmark | None:
     tweet_text = _extract_full_text(entry)
     username, display_name = _extract_user(entry)
     created_at = _parse_datetime(
-        legacy.get("created_at")
-        or entry.get("created_at")
-        or ""
+        legacy.get("created_at") or entry.get("created_at") or ""
     )
     urls = _extract_urls(entry)
 
@@ -268,9 +257,7 @@ def ingest_file(db: Database, filepath: Path, tagger=None) -> IngestResult:
             }
             article = _extract_embedded_article(entries_by_id.get(bm.id, {}))
 
-            missing_urls = [
-                url for url in bm.urls if url not in existing_links
-            ]
+            missing_urls = [url for url in bm.urls if url not in existing_links]
             article_changed = False
             if article and article.get("url"):
                 previous = existing_links.get(article["url"])
@@ -295,9 +282,7 @@ def ingest_file(db: Database, filepath: Path, tagger=None) -> IngestResult:
             db.insert_bookmark(bm)
 
             for url in missing_urls:
-                db.insert_link(
-                    BookmarkLink(bookmark_id=bm.id, original_url=url)
-                )
+                db.insert_link(BookmarkLink(bookmark_id=bm.id, original_url=url))
 
             if article and article.get("url"):
                 db.insert_link(
@@ -307,9 +292,11 @@ def ingest_file(db: Database, filepath: Path, tagger=None) -> IngestResult:
                         page_title=article.get("title"),
                         page_content=article.get("text"),
                         content_type="x-article",
-                        fetched_at=datetime.now()
-                        if article.get("title") or article.get("text")
-                        else None,
+                        fetched_at=(
+                            datetime.now()
+                            if article.get("title") or article.get("text")
+                            else None
+                        ),
                     )
                 )
 
