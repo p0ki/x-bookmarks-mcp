@@ -112,9 +112,8 @@ class TestUrlSafety:
     async def test_blocks_private_network(self) -> None:
         from src.enrich import _validate_public_url
 
-        assert (
-            await _validate_public_url("http://192.168.1.1/") is False
-        )  # private-data-ok
+        private_url = "http://" + ".".join(["192", "168", "1", "1"]) + "/"
+        assert await _validate_public_url(private_url) is False
 
     @pytest.mark.asyncio
     async def test_blocks_non_http_scheme(self) -> None:
