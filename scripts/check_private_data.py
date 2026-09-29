@@ -98,7 +98,7 @@ def scan_file(filepath: str) -> list[tuple[int, str, str]]:
         with open(filepath, encoding="utf-8", errors="ignore") as f:
             for line_num, line in enumerate(f, start=1):
                 # Inline suppression (works in any file type)
-                if "noqa: private-data" in line:
+                if "private-data-ok" in line:
                     continue
 
                 # Skip structural false positives
