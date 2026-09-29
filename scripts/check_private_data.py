@@ -138,7 +138,7 @@ def main() -> int:
             print(f"    Pattern: {pattern_name}")
             print(f"    Line:    {line}")
             print()
-        print("To suppress a false positive, add '# noqa: private-data' to the line.")
+        print("To suppress a false positive, add '# private-data-ok' to the line.")
         return 1
 
     print("Private data scan: CLEAN")
