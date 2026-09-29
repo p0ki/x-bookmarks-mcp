@@ -98,3 +98,6 @@ jobs:
             echo "ERROR: Image failed to start"
             exit 1
           fi
+
+      - name: Verify Docker Compose CLI
+        run: docker compose run --rm xbookmarks-cli --help
