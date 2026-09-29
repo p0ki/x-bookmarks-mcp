@@ -567,13 +567,13 @@ class TestSummarizeTopic:
 
 class TestMutationSearchFreshness:
     def test_added_note_is_immediately_searchable(self, seeded_db: Database) -> None:
-        add_note(seeded_db, "bm5", "unique-triglav-marker")
-        results = search_bookmarks(seeded_db, "unique-triglav-marker")
+        add_note(seeded_db, "bm5", "uniquetriglavmarker")
+        results = search_bookmarks(seeded_db, "uniquetriglavmarker")
         assert [row["id"] for row in results] == ["bm5"]
 
     def test_added_tag_is_immediately_searchable(self, seeded_db: Database) -> None:
-        add_tag(seeded_db, "bm5", "fresh-marker")
-        results = search_bookmarks(seeded_db, "fresh-marker")
+        add_tag(seeded_db, "bm5", "freshmarker")
+        results = search_bookmarks(seeded_db, "freshmarker")
         assert [row["id"] for row in results] == ["bm5"]
 
     def test_empty_tag_is_rejected(self, seeded_db: Database) -> None:
