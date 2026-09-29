@@ -17,7 +17,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install linters
-        run: pip install ruff black isort
+        run: pip install ruff==0.16.9 black==26.5.1 isort==9.0.2
 
       - name: Run ruff
         run: ruff check src/ tests/
@@ -98,3 +98,6 @@ jobs:
             echo "ERROR: Image failed to start"
             exit 1
           fi
+
+      - name: Verify Docker Compose CLI
+        run: docker compose run --rm xbookmarks-cli --help

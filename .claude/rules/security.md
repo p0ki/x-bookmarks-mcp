@@ -43,17 +43,21 @@ cursor.execute(f"SELECT * FROM bookmarks WHERE id = '{bookmark_id}'")
 
 ## URL Fetching
 
-- Only fetch URLs that were explicitly in the user's bookmark export
+- Only fetch URLs present in the bookmark export or bookmark text
+- Allow only HTTP(S) URLs
+- Block loopback, private, link-local, multicast, reserved, and other non-public destinations
+- Revalidate every redirect target before following it
 - Respect rate limits — configurable delay between fetches
 - Set reasonable timeouts (default 10 seconds)
 - Set a User-Agent header identifying the tool
-- Handle redirects but cap at 5 hops
-- Truncate content at MAX_CONTENT_LENGTH to prevent memory issues
+- Cap redirects at 5 hops
+- Stream responses and enforce MAX_RESPONSE_BYTES before text extraction
+- Truncate extracted text at MAX_CONTENT_LENGTH
 
 ## Configuration
 
 - Sensitive config in `.env` (gitignored)
-- Default config in `.env.example` and `config.yaml.example` (committed)
+- Default config in `.env.example` and `config.yaml` (committed)
 - Never log sensitive configuration values
 
 ## Docker

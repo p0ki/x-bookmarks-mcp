@@ -5,6 +5,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from src.db import Database
 from src.models import Bookmark, BookmarkLink, IngestResult
@@ -16,119 +17,95 @@ def detect_format(filepath: Path) -> str:
     with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
-    if not isinstance(data, list) or len(data) == 0:
+    if not isinstance(data, list) or not data:
         return "unknown"
 
     first = data[0]
-
-    # Official Twitter web exporter (nested legacy + rest_id)
     if "rest_id" in first or (
         "legacy" in first and "full_text" in first.get("legacy", {})
     ):
         return "twitter-web-exporter"
-
-    # Simple JSON (older format)
-    if "text" in first and "user" in first:
-        return "simple-json"
-
-    # ←←← NEW: Your exact format (flattened X bookmarks)
     if "full_text" in first and "screen_name" in first and "id" in first:
         return "x-bookmarks-flat"
-
+    if "text" in first and "user" in first:
+        return "simple-json"
     return "unknown"
 
 
 def _parse_datetime(date_str: str) -> datetime:
-    """Parse both old Twitter format and the new flat X export format."""
     if not date_str:
-        logger.warning(f"Could not parse date: {date_str}")
+        logger.warning("Bookmark has no parseable created_at value")
         return datetime.now()
 
-    # 1. Old classic Twitter format (still used by some exporters)
     try:
         return datetime.strptime(date_str, "%a %b %d %H:%M:%S %z %Y")
     except (ValueError, TypeError):
         pass
 
-    # 2. New flat X bookmarks format: "2026-03-31 20:17:06 +02:00"
     try:
-        # Normalise to format that Python 3.13 understands:
-        #   - replace space with T
-        #   - remove colon from timezone (+02:00 → +0200)
         iso_str = date_str.replace(" ", "T", 1)
         if len(iso_str) > 19 and iso_str[-3] == ":" and iso_str[-6] in "+-":
             iso_str = iso_str[:-3] + iso_str[-2:]
         return datetime.fromisoformat(iso_str)
     except (ValueError, TypeError):
-        pass
+        logger.warning("Could not parse bookmark date: %r", date_str)
+        return datetime.now()
 
-    logger.warning(f"Could not parse date: {date_str}")
-    return datetime.now()
+
+def _entry_id(entry: dict) -> str:
+    return str(entry.get("rest_id") or entry.get("id_str") or entry.get("id") or "")
 
 
 def _extract_user(entry: dict) -> tuple[str, str]:
-    """Extract (screen_name, display_name) — works for both nested and flat formats."""
-    # 1. Official Twitter web exporter (nested)
     try:
         user = entry["core"]["user_results"]["result"]["legacy"]
         return user["screen_name"], user["name"]
     except (KeyError, TypeError):
         pass
 
-    # 2. Older simple-json format
     try:
-        return entry["user"]["screen_name"], entry["user"]["name"]
+        user = entry["user"]
+        return user["screen_name"], user.get("name", user["screen_name"])
     except (KeyError, TypeError):
         pass
 
-    # 3. Flat X bookmarks export (your format) — direct top-level keys
-    try:
+    if entry.get("screen_name"):
         return entry["screen_name"], entry.get("name", "Unknown")
-    except (KeyError, TypeError):
-        pass
 
     return "unknown", "Unknown"
 
 
 def _extract_urls(entry: dict) -> list[str]:
-    """Extract URLs from all available sources in the entry.
-
-    Priority:
-    1. metadata.legacy.entities.urls (tweet-level expanded URLs)
-    2. metadata.note_tweet entity_set urls (long-tweet expanded URLs)
-    3. legacy.entities.urls (official twitter-web-exporter nested format)
-    4. Fallback: raw t.co URLs from full_text (enrichment will resolve them)
-    """
     urls: list[str] = []
     seen: set[str] = set()
 
-    def _add(url: str) -> None:
+    def _add(url: str | None) -> None:
         if url and url not in seen:
             seen.add(url)
             urls.append(url)
 
-    # 1. metadata.legacy.entities.urls (flat export with metadata)
     meta = entry.get("metadata", {})
     for u in meta.get("legacy", {}).get("entities", {}).get("urls", []):
-        _add(u.get("expanded_url", ""))
+        _add(u.get("expanded_url"))
 
-    # 2. note_tweet entity_set (long tweets)
-    note = meta.get("note_tweet", {})
     note_urls = (
-        note.get("note_tweet_results", {})
+        meta.get("note_tweet", {})
+        .get("note_tweet_results", {})
         .get("result", {})
         .get("entity_set", {})
         .get("urls", [])
     )
     for u in note_urls:
-        _add(u.get("expanded_url", ""))
+        _add(u.get("expanded_url"))
 
-    # 3. legacy.entities.urls (nested twitter-web-exporter format)
     legacy = entry.get("legacy", entry)
     for u in legacy.get("entities", {}).get("urls", []):
-        _add(u.get("expanded_url", ""))
+        _add(u.get("expanded_url"))
 
-    # 4. Fallback: t.co URLs from text (enrichment resolves redirects)
+    article = _extract_embedded_article(entry)
+    if article:
+        _add(article.get("url"))
+
     if not urls:
         text = legacy.get("full_text") or legacy.get("text", "")
         for tco in re.findall(r"https?://t\.co/\w+", text):
@@ -138,8 +115,6 @@ def _extract_urls(entry: dict) -> list[str]:
 
 
 def _extract_full_text(entry: dict) -> str:
-    """Get the best available tweet text, preferring note_tweet for long posts."""
-    # note_tweet has the full untruncated text for long tweets
     meta = entry.get("metadata", {})
     note_text = (
         meta.get("note_tweet", {})
@@ -154,78 +129,205 @@ def _extract_full_text(entry: dict) -> str:
     return legacy.get("full_text") or legacy.get("text", "")
 
 
+def _collect_text_nodes(value: Any) -> list[str]:
+    """Collect text leaves from an X Article content_state structure."""
+    found: list[str] = []
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str) and text.strip():
+            found.append(text.strip())
+        for child in value.values():
+            found.extend(_collect_text_nodes(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.extend(_collect_text_nodes(child))
+    return found
+
+
+def _extract_embedded_article(entry: dict) -> dict | None:
+    """Return article content when the bookmark export already contains it."""
+    title = entry.get("article_title")
+    text = entry.get("article_text")
+    url = entry.get("article_url")
+
+    meta = entry.get("metadata", {})
+    article_result = (
+        meta.get("article", {}).get("article_results", {}).get("result", {})
+    )
+    if not article_result:
+        article_result = (
+            entry.get("article", {}).get("article_results", {}).get("result", {})
+        )
+
+    if article_result:
+        title = title or article_result.get("title")
+        url = url or article_result.get("url")
+        if not text:
+            content_state = article_result.get("content_state")
+            nodes = _collect_text_nodes(content_state)
+            if nodes:
+                text = "\n\n".join(dict.fromkeys(nodes))
+
+    if not (title or text or url):
+        return None
+
+    if not url:
+        username, _ = _extract_user(entry)
+        tweet_id = _entry_id(entry)
+        if tweet_id:
+            url = f"https://x.com/{username}/status/{tweet_id}"
+
+    return {"title": title, "text": text, "url": url}
+
+
+def _parse_entry(entry: dict) -> Bookmark | None:
+    tweet_id = _entry_id(entry)
+    if not tweet_id:
+        logger.warning("Skipping entry with no ID")
+        return None
+
+    legacy = entry.get("legacy", entry)
+    tweet_text = _extract_full_text(entry)
+    username, display_name = _extract_user(entry)
+    created_at = _parse_datetime(
+        legacy.get("created_at") or entry.get("created_at") or ""
+    )
+    urls = _extract_urls(entry)
+
+    reply_to = legacy.get("in_reply_to_status_id_str")
+    conversation_id = legacy.get("conversation_id_str")
+    is_thread = bool(reply_to) or bool(
+        conversation_id and str(conversation_id) != tweet_id
+    )
+
+    return Bookmark(
+        id=tweet_id,
+        author_username=username,
+        author_name=display_name,
+        tweet_text=tweet_text,
+        tweet_url=f"https://x.com/{username}/status/{tweet_id}",
+        created_at=created_at,
+        is_thread=is_thread,
+        urls=urls,
+    )
+
+
 def parse_twitter_web_exporter(data: list[dict]) -> list[Bookmark]:
-    bookmarks = []
+    bookmarks: list[Bookmark] = []
     for entry in data:
         try:
-            legacy = entry.get("legacy", entry)
-            tweet_id = (
-                entry.get("rest_id") or entry.get("id_str") or str(entry.get("id", ""))
-            )
-            if not tweet_id:
-                logger.warning("Skipping entry with no ID")
-                continue
-
-            tweet_text = _extract_full_text(entry)
-            username, display_name = _extract_user(entry)
-            created_at = _parse_datetime(legacy.get("created_at", ""))
-            urls = _extract_urls(entry)
-
-            reply_to = legacy.get("in_reply_to_status_id_str")
-            is_thread = reply_to is not None and reply_to == tweet_id
-
-            bookmarks.append(
-                Bookmark(
-                    id=tweet_id,
-                    author_username=username,
-                    author_name=display_name,
-                    tweet_text=tweet_text,
-                    tweet_url=f"https://x.com/{username}/status/{tweet_id}",
-                    created_at=created_at,
-                    is_thread=is_thread,
-                    urls=urls,
-                )
-            )
-        except Exception as e:
-            logger.warning(f"Skipping malformed entry: {e}")
-            continue
-
+            bookmark = _parse_entry(entry)
+            if bookmark:
+                bookmarks.append(bookmark)
+        except Exception as exc:
+            logger.warning("Skipping malformed entry: %s", exc)
     return bookmarks
+
+
+def _bookmark_changed(existing: dict, bookmark: Bookmark) -> bool:
+    expected = {
+        "author_username": bookmark.author_username,
+        "author_name": bookmark.author_name,
+        "tweet_text": bookmark.tweet_text,
+        "tweet_url": bookmark.tweet_url,
+        "created_at": bookmark.created_at.isoformat(),
+        "is_thread": int(bookmark.is_thread),
+        "thread_text": bookmark.thread_text,
+    }
+    return any(existing.get(key) != value for key, value in expected.items())
 
 
 def ingest_file(db: Database, filepath: Path, tagger=None) -> IngestResult:
     fmt = detect_format(filepath)
     if fmt == "unknown":
         raise ValueError(f"Unknown export format: {filepath}")
-    if fmt == "simple-json":
-        raise NotImplementedError("Simple JSON format not yet supported")
 
     with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     bookmarks = parse_twitter_web_exporter(data)
+    entries_by_id = {_entry_id(entry): entry for entry in data}
     result = IngestResult()
 
     for bm in bookmarks:
-        existing = db.get_bookmark(bm.id)
-        if existing is not None:
-            result.skipped += 1
-            continue
         try:
+            existing = db.get_bookmark(bm.id)
+            existing_links = {
+                link["original_url"]: link for link in db.get_links(bm.id)
+            }
+            article = _extract_embedded_article(entries_by_id.get(bm.id, {}))
+
+            missing_urls = [url for url in bm.urls if url not in existing_links]
+            article_changed = False
+            if article and article.get("url"):
+                previous = existing_links.get(article["url"])
+                article_changed = (
+                    previous is None
+                    or previous.get("page_title") != article.get("title")
+                    or previous.get("page_content") != article.get("text")
+                    or previous.get("content_type") != "x-article"
+                )
+
+            changed = (
+                existing is None
+                or _bookmark_changed(existing, bm)
+                or bool(missing_urls)
+                or article_changed
+            )
+
+            if not changed:
+                result.skipped += 1
+                continue
+
             db.insert_bookmark(bm)
-            for url in bm.urls:
+
+            for url in missing_urls:
                 db.insert_link(BookmarkLink(bookmark_id=bm.id, original_url=url))
+
+            if article and article.get("url"):
+                db.insert_link(
+                    BookmarkLink(
+                        bookmark_id=bm.id,
+                        original_url=article["url"],
+                        page_title=article.get("title"),
+                        page_content=article.get("text"),
+                        content_type="x-article",
+                        fetched_at=(
+                            datetime.now()
+                            if article.get("title") or article.get("text")
+                            else None
+                        ),
+                    )
+                )
+
             if tagger:
-                tags = tagger.tag_bookmark(bm, [])
-                for tag in tags:
+                link_models = [
+                    BookmarkLink(
+                        bookmark_id=bm.id,
+                        original_url=link["original_url"],
+                        page_title=link.get("page_title"),
+                        page_content=link.get("page_content"),
+                        content_type=link.get("content_type", "article"),
+                    )
+                    for link in db.get_links(bm.id)
+                ]
+                for tag in tagger.tag_bookmark(bm, link_models):
                     db.add_tag(bm.id, tag)
-            result.added += 1
-        except Exception as e:
-            logger.warning(f"Failed to insert bookmark {bm.id}: {e}")
+
+            if existing is None:
+                result.added += 1
+            else:
+                result.updated += 1
+        except Exception as exc:
+            logger.warning("Failed to ingest bookmark %s: %s", bm.id, exc)
             result.errors += 1
 
     db.rebuild_fts()
     logger.info(
-        f"Ingest complete: {result.added} added, {result.skipped} skipped, {result.errors} errors"
+        "Ingest complete: %d added, %d updated, %d skipped, %d errors",
+        result.added,
+        result.updated,
+        result.skipped,
+        result.errors,
     )
     return result

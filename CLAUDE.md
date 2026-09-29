@@ -42,8 +42,8 @@ python -m src.server          # MCP server (auto-started by Claude Code / Cowork
 
 You have full access to every skill, plugin, MCP, agent, and sub-agent in these directories. Use them aggressively when they add value:
 
-- `D:\Projekti\everything-claude-code` <!-- noqa: private-data -->
-- `D:\Projekti\awesome-claude-code-toolkit` <!-- noqa: private-data -->
+- `D:\Projekti\everything-claude-code` <!-- private-data-ok -->
+- `D:\Projekti\awesome-claude-code-toolkit` <!-- private-data-ok -->
 
 Examples of allowed/encouraged usage:
 

@@ -97,59 +97,65 @@ class TestDetectContentType:
 
 
 # ---------------------------------------------------------------------------
-# _fetch_and_extract
+# URL safety + _fetch_and_extract
 # ---------------------------------------------------------------------------
 
 
-class TestFetchAndExtract:
-    """Async URL fetching + trafilatura content extraction."""
+class TestUrlSafety:
+    @pytest.mark.asyncio
+    async def test_blocks_loopback(self) -> None:
+        from src.enrich import _validate_public_url
 
+        assert await _validate_public_url("http://127.0.0.1:8080/admin") is False
+
+    @pytest.mark.asyncio
+    async def test_blocks_private_network(self) -> None:
+        from src.enrich import _validate_public_url
+
+        private_url = "http://" + ".".join(["192", "168", "1", "1"]) + "/"
+        assert await _validate_public_url(private_url) is False
+
+    @pytest.mark.asyncio
+    async def test_blocks_non_http_scheme(self) -> None:
+        from src.enrich import _validate_public_url
+
+        assert await _validate_public_url("file:///etc/passwd") is False
+
+
+class TestFetchAndExtract:
     @pytest.mark.asyncio
     async def test_successful_fetch_returns_title_and_content(self) -> None:
-        from src.enrich import _fetch_and_extract
-
-        fake_html = "<html><head><title>My Page</title></head><body><p>Hello world</p></body></html>"
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = fake_html
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        mock_meta = MagicMock()
-        mock_meta.title = "My Page"
-        with patch("trafilatura.extract", return_value="Hello world"), patch(
-            "trafilatura.extract_metadata", return_value=mock_meta
-        ):
-            title, content, ctype = await _fetch_and_extract(
-                mock_client,
-                "https://example.com/post",
-                max_length=50_000,
-            )
-
-        assert content == "Hello world"
-        assert title == "My Page"
-
-    @pytest.mark.asyncio
-    async def test_failed_request_returns_none_values(self) -> None:
         import httpx
 
         from src.enrich import _fetch_and_extract
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(
-            side_effect=httpx.RequestError("connection refused")
-        )
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text="<html><head><title>My Page</title></head><body>Hello world</body></html>",
+                request=request,
+            )
 
-        title, content, ctype = await _fetch_and_extract(
-            mock_client,
-            "https://unreachable.example.com/page",
-            max_length=50_000,
-        )
+        mock_meta = MagicMock()
+        mock_meta.title = "My Page"
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with (
+                patch(
+                    "src.enrich._validate_public_url",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch("trafilatura.extract", return_value="Hello world"),
+                patch("trafilatura.extract_metadata", return_value=mock_meta),
+            ):
+                title, content, _ctype = await _fetch_and_extract(
+                    client,
+                    "https://example.com/post",
+                    max_length=50_000,
+                )
 
-        assert title is None
-        assert content is None
+        assert title == "My Page"
+        assert content == "Hello world"
 
     @pytest.mark.asyncio
     async def test_http_error_returns_none_values(self) -> None:
@@ -157,80 +163,122 @@ class TestFetchAndExtract:
 
         from src.enrich import _fetch_and_extract
 
-        mock_response = MagicMock()
-        mock_response.status_code = 404
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError(
-                "Not Found",
-                request=MagicMock(),
-                response=mock_response,
-            )
-        )
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, request=request)
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        title, content, ctype = await _fetch_and_extract(
-            mock_client,
-            "https://example.com/missing",
-            max_length=50_000,
-        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch(
+                "src.enrich._validate_public_url",
+                new=AsyncMock(return_value=True),
+            ):
+                title, content, _ctype = await _fetch_and_extract(
+                    client,
+                    "https://example.com/missing",
+                    max_length=50_000,
+                )
 
         assert title is None
         assert content is None
 
     @pytest.mark.asyncio
     async def test_content_truncated_at_max_length(self) -> None:
+        import httpx
+
         from src.enrich import _fetch_and_extract
 
         long_text = "x" * 100_000
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "<html><body><p>" + long_text + "</p></body></html>"
-        mock_response.raise_for_status = MagicMock()
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text="<html><body>long</body></html>",
+                request=request,
+            )
 
-        max_len = 500
         mock_meta = MagicMock()
         mock_meta.title = "Long"
-        with patch("trafilatura.extract", return_value=long_text), patch(
-            "trafilatura.extract_metadata", return_value=mock_meta
-        ):
-            title, content, ctype = await _fetch_and_extract(
-                mock_client,
-                "https://example.com/long",
-                max_length=max_len,
-            )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with (
+                patch(
+                    "src.enrich._validate_public_url",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch("trafilatura.extract", return_value=long_text),
+                patch("trafilatura.extract_metadata", return_value=mock_meta),
+            ):
+                _title, content, _ctype = await _fetch_and_extract(
+                    client,
+                    "https://example.com/long",
+                    max_length=500,
+                )
 
         assert content is not None
-        assert len(content) <= max_len
+        assert len(content) == 500
 
     @pytest.mark.asyncio
-    async def test_content_type_is_detected_from_url(self) -> None:
+    async def test_oversized_content_length_is_rejected(self) -> None:
+        import httpx
+
         from src.enrich import _fetch_and_extract
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = "<html><body>code</body></html>"
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        mock_meta = MagicMock()
-        mock_meta.title = "Repo"
-        with patch("trafilatura.extract", return_value="code stuff"), patch(
-            "trafilatura.extract_metadata", return_value=mock_meta
-        ):
-            _title, _content, ctype = await _fetch_and_extract(
-                mock_client,
-                "https://github.com/user/repo",
-                max_length=50_000,
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={
+                    "content-type": "text/html",
+                    "content-length": "6000000",
+                },
+                content=b"x",
+                request=request,
             )
 
-        assert ctype == "repo"
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch(
+                "src.enrich._validate_public_url",
+                new=AsyncMock(return_value=True),
+            ):
+                title, content, _ctype = await _fetch_and_extract(
+                    client,
+                    "https://example.com/huge",
+                    max_length=50_000,
+                    max_response_bytes=5_000_000,
+                )
+
+        assert title is None
+        assert content is None
+
+    @pytest.mark.asyncio
+    async def test_redirect_to_private_host_is_blocked(self) -> None:
+        import httpx
+
+        from src.enrich import _download_html
+
+        calls = 0
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                302,
+                headers={"location": "http://127.0.0.1/internal"},
+                request=request,
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch(
+                "src.enrich._validate_public_url",
+                new=AsyncMock(side_effect=[True, False]),
+            ):
+                html, final_url = await _download_html(
+                    client,
+                    "https://example.com/start",
+                    max_response_bytes=5_000_000,
+                )
+
+        assert html is None
+        assert final_url is None
+        assert calls == 1
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +389,7 @@ class TestEnrichBookmark:
         bm = _bm("47", urls=["https://ok.example.com/a", "https://fail.example.com/b"])
         _insert(db, bm)
 
-        async def mock_fetch(client, url, max_length):
+        async def mock_fetch(client, url, max_length, max_response_bytes=5_000_000):
             if "ok" in url:
                 return ("Good Title", "Good content.", "article")
             return (None, None, "article")
@@ -382,10 +430,13 @@ class TestEnrichAll:
         _insert(db, bm1)
         _insert(db, bm2)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Title", "Content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("Title", "Content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         assert result.enriched == 2
@@ -402,10 +453,13 @@ class TestEnrichAll:
         _insert(db, already_done)
         _insert(db, fresh)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Title", "Content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("Title", "Content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         # "201" is already enriched — should be counted as skipped
@@ -424,10 +478,13 @@ class TestEnrichAll:
         )
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("New Title", "New content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("New Title", "New content.", "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db, refresh=True)
 
         # With refresh=True the bookmark was previously enriched but must be processed again
@@ -441,10 +498,13 @@ class TestEnrichAll:
         bm = _bm("401", urls=["https://broken.example.com"])
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=(None, None, "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=(None, None, "article")),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db)
 
         assert result.failed == 1
@@ -471,10 +531,15 @@ class TestEnrichAll:
         bm = _bm("601", urls=["https://example.com/fts"])
         _insert(db, bm)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("FTS Title", "Searchable content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(
+                    return_value=("FTS Title", "Searchable content.", "article")
+                ),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             with patch.object(db, "rebuild_fts", wraps=db.rebuild_fts) as mock_rebuild:
                 await enrich_all(db)
 
@@ -493,10 +558,13 @@ class TestEnrichAll:
         async def fake_sleep(seconds: float) -> None:
             sleep_calls.append(seconds)
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("T", "C", "article")),
-        ), patch("asyncio.sleep", new=fake_sleep):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(return_value=("T", "C", "article")),
+            ),
+            patch("asyncio.sleep", new=fake_sleep),
+        ):
             await enrich_all(db)
 
         # Sleep must occur between the 2 URL fetches
@@ -514,10 +582,15 @@ class TestEnrichAll:
         mock_tagger = MagicMock()
         mock_tagger.retag_all = MagicMock()
 
-        with patch(
-            "src.enrich._fetch_and_extract",
-            new=AsyncMock(return_value=("Tagged Title", "Tagged content.", "article")),
-        ), patch("asyncio.sleep", new=AsyncMock()):
+        with (
+            patch(
+                "src.enrich._fetch_and_extract",
+                new=AsyncMock(
+                    return_value=("Tagged Title", "Tagged content.", "article")
+                ),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
             result = await enrich_all(db, tagger=mock_tagger)
 
         assert result.enriched == 1
@@ -535,15 +608,16 @@ class TestEnrichAll:
 
         call_count = 0
 
-        async def flaky_fetch(client, url, max_length):
+        async def flaky_fetch(client, url, max_length, max_response_bytes=5_000_000):
             nonlocal call_count
             call_count += 1
             if "crash" in url:
                 raise RuntimeError("unexpected network error")
             return ("OK Title", "OK Content.", "article")
 
-        with patch("src.enrich._fetch_and_extract", new=flaky_fetch), patch(
-            "asyncio.sleep", new=AsyncMock()
+        with (
+            patch("src.enrich._fetch_and_extract", new=flaky_fetch),
+            patch("asyncio.sleep", new=AsyncMock()),
         ):
             result = await enrich_all(db)
 

@@ -563,3 +563,19 @@ class TestSummarizeTopic:
     def test_count_matches_bookmarks_list_length(self, seeded_db: Database) -> None:
         result = summarize_topic(seeded_db, "python")
         assert result["count"] == len(result["bookmarks"])
+
+
+class TestMutationSearchFreshness:
+    def test_added_note_is_immediately_searchable(self, seeded_db: Database) -> None:
+        add_note(seeded_db, "bm5", "uniquetriglavmarker")
+        results = search_bookmarks(seeded_db, "uniquetriglavmarker")
+        assert [row["id"] for row in results] == ["bm5"]
+
+    def test_added_tag_is_immediately_searchable(self, seeded_db: Database) -> None:
+        add_tag(seeded_db, "bm5", "freshmarker")
+        results = search_bookmarks(seeded_db, "freshmarker")
+        assert [row["id"] for row in results] == ["bm5"]
+
+    def test_empty_tag_is_rejected(self, seeded_db: Database) -> None:
+        result = add_tag(seeded_db, "bm5", "   ")
+        assert "error" in result

@@ -33,6 +33,7 @@ class BookmarkLink:
 @dataclass
 class IngestResult:
     added: int = 0
+    updated: int = 0
     skipped: int = 0
     errors: int = 0
 

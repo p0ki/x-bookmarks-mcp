@@ -1,11 +1,13 @@
 """Async URL fetching + content extraction pipeline for x-bookmarks-mcp."""
 
 import asyncio
+import ipaddress
 import logging
 import os
 import re
+import socket
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import trafilatura
@@ -15,37 +17,38 @@ from src.models import BookmarkLink, EnrichResult
 
 logger = logging.getLogger(__name__)
 
-# Matches http/https URLs in plain text
 _URL_RE = re.compile(r"https?://[^\s\"\'>]+", re.IGNORECASE)
-
 _USER_AGENT = "x-bookmarks-mcp/1.0 (local bookmark enrichment tool)"
+_ALLOWED_SCHEMES = {"http", "https"}
+_ALLOWED_CONTENT_TYPES = (
+    "text/",
+    "application/xhtml+xml",
+)
+_MAX_REDIRECTS = 5
 
 
 def _get_config() -> dict:
-    """Read enrichment settings from environment variables with defaults."""
     return {
         "fetch_delay_seconds": float(os.environ.get("FETCH_DELAY_SECONDS", "1.0")),
         "fetch_timeout_seconds": float(os.environ.get("FETCH_TIMEOUT_SECONDS", "10")),
         "max_content_length": int(os.environ.get("MAX_CONTENT_LENGTH", "50000")),
+        "max_response_bytes": int(os.environ.get("MAX_RESPONSE_BYTES", "5000000")),
     }
 
 
 def _detect_content_type(url: str) -> str:
-    """Detect content type from URL patterns."""
     parsed = urlparse(url.lower())
     hostname = parsed.hostname or ""
     path = parsed.path or ""
 
     if "github.com" in hostname or "gitlab.com" in hostname:
         return "repo"
-
     if "youtube.com" in hostname or "youtu.be" in hostname:
         return "video"
 
     doc_hosts = ("docs.", "documentation.", "developer.", "devdocs.")
     if any(hostname.startswith(prefix) for prefix in doc_hosts):
         return "docs"
-
     if "readthedocs." in hostname:
         return "docs"
 
@@ -57,38 +60,158 @@ def _detect_content_type(url: str) -> str:
         "/guide/",
         "/manual/",
     )
-    if any(path.startswith(p) for p in doc_paths):
+    if any(path.startswith(prefix) for prefix in doc_paths):
         return "docs"
 
     return "article"
+
+
+def _is_public_ip(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_global
+    except ValueError:
+        return False
+
+
+async def _validate_public_url(url: str) -> bool:
+    """Allow only public HTTP(S) destinations.
+
+    The hostname is resolved before each request/redirect and every returned
+    address must be globally routable. This blocks localhost, RFC1918,
+    link-local, multicast, reserved, and other non-public targets.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
+        return False
+    if parsed.username or parsed.password or not parsed.hostname:
+        return False
+
+    hostname = parsed.hostname
+    try:
+        ipaddress.ip_address(hostname)
+        return _is_public_ip(hostname)
+    except ValueError:
+        pass
+
+    try:
+        infos = await asyncio.to_thread(
+            socket.getaddrinfo,
+            hostname,
+            parsed.port or (443 if parsed.scheme == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror:
+        logger.warning("Could not resolve URL host: %s", hostname)
+        return False
+
+    addresses = {info[4][0] for info in infos}
+    return bool(addresses) and all(_is_public_ip(address) for address in addresses)
+
+
+def _content_type_allowed(header_value: str) -> bool:
+    if not header_value:
+        return True
+    mime = header_value.split(";", 1)[0].strip().lower()
+    return any(
+        mime.startswith(prefix) if prefix.endswith("/") else mime == prefix
+        for prefix in _ALLOWED_CONTENT_TYPES
+    )
+
+
+async def _download_html(
+    client: httpx.AsyncClient,
+    url: str,
+    max_response_bytes: int,
+) -> tuple[str | None, str | None]:
+    """Download a bounded text response and validate every redirect target."""
+    current_url = url
+
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not await _validate_public_url(current_url):
+            logger.warning("Blocked non-public or invalid URL: %s", current_url)
+            return None, None
+
+        try:
+            async with client.stream(
+                "GET",
+                current_url,
+                follow_redirects=False,
+            ) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        return None, None
+                    current_url = urljoin(str(response.url), location)
+                    continue
+
+                response.raise_for_status()
+
+                if not _content_type_allowed(response.headers.get("content-type", "")):
+                    logger.warning(
+                        "Skipping unsupported content type %r from %s",
+                        response.headers.get("content-type"),
+                        current_url,
+                    )
+                    return None, None
+
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > max_response_bytes:
+                            logger.warning(
+                                "Skipping oversized response from %s (%s bytes)",
+                                current_url,
+                                content_length,
+                            )
+                            return None, None
+                    except ValueError:
+                        pass
+
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_response_bytes:
+                        logger.warning(
+                            "Stopped oversized streamed response from %s",
+                            current_url,
+                        )
+                        return None, None
+
+                encoding = response.encoding or "utf-8"
+                return body.decode(encoding, errors="replace"), current_url
+
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "HTTP %s fetching %s: %s",
+                exc.response.status_code,
+                current_url,
+                exc,
+            )
+            return None, None
+        except httpx.RequestError as exc:
+            logger.warning("Request error fetching %s: %s", current_url, exc)
+            return None, None
+        except Exception as exc:
+            logger.warning("Unexpected error fetching %s: %s", current_url, exc)
+            return None, None
+
+    logger.warning("Too many redirects fetching %s", url)
+    return None, None
 
 
 async def _fetch_and_extract(
     client: httpx.AsyncClient,
     url: str,
     max_length: int,
+    max_response_bytes: int = 5_000_000,
 ) -> tuple[str | None, str | None, str]:
-    """Fetch a URL and extract readable content using trafilatura.
-
-    Returns:
-        (page_title, page_content, content_type)
-        title and content are None on failure.
-    """
     content_type = _detect_content_type(url)
+    html, final_url = await _download_html(client, url, max_response_bytes)
+    if html is None:
+        return None, None, content_type
 
-    try:
-        response = await client.get(url)
-        response.raise_for_status()
-        html = response.text
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"HTTP {e.response.status_code} fetching {url}: {e}")
-        return None, None, content_type
-    except httpx.RequestError as e:
-        logger.warning(f"Request error fetching {url}: {e}")
-        return None, None, content_type
-    except Exception as e:
-        logger.warning(f"Unexpected error fetching {url}: {e}")
-        return None, None, content_type
+    if final_url:
+        content_type = _detect_content_type(final_url)
 
     try:
         extracted = trafilatura.extract(
@@ -99,25 +222,16 @@ async def _fetch_and_extract(
             output_format="txt",
         )
         metadata = trafilatura.extract_metadata(html)
-
         page_title = metadata.title if metadata and metadata.title else None
-
-        if extracted:
-            page_content = (
-                extracted[:max_length] if len(extracted) > max_length else extracted
-            )
-        else:
-            page_content = None
-
-    except Exception as e:
-        logger.warning(f"Trafilatura extraction failed for {url}: {e}")
+        page_content = extracted[:max_length] if extracted else None
+    except Exception as exc:
+        logger.warning("Trafilatura extraction failed for %s: %s", url, exc)
         return None, None, content_type
 
     return page_title, page_content, content_type
 
 
 def _extract_urls_from_text(text: str) -> list[str]:
-    """Extract all http/https URLs from plain text using regex."""
     return _URL_RE.findall(text)
 
 
@@ -127,62 +241,54 @@ async def enrich_bookmark(
     client: httpx.AsyncClient,
     config: dict,
 ) -> bool | None:
-    """Enrich a single bookmark by fetching all its URLs.
-
-    Discovers URLs from:
-    1. Existing bookmark_links rows (including unfetched placeholder rows)
-    2. Regex extraction from tweet_text as a fallback
-
-    Returns True if at least one URL was successfully fetched.
-    """
     bm_data = db.get_bookmark(bookmark_id)
     if not bm_data:
-        logger.warning(f"Bookmark {bookmark_id} not found, skipping")
+        logger.warning("Bookmark %s not found, skipping", bookmark_id)
         return False
 
-    # Collect URLs: existing links first, then tweet_text fallback
     existing_links = db.get_links(bookmark_id)
-    known_urls: set[str] = {lnk["original_url"] for lnk in existing_links}
+    known_urls: set[str] = {link["original_url"] for link in existing_links}
 
-    # Fallback: extract URLs from tweet_text
-    tweet_text = bm_data.get("tweet_text") or ""
-    for url in _extract_urls_from_text(tweet_text):
-        if url not in known_urls:
-            known_urls.add(url)
+    for url in _extract_urls_from_text(bm_data.get("tweet_text") or ""):
+        known_urls.add(url)
 
     if not known_urls:
-        logger.debug(f"Bookmark {bookmark_id} has no URLs to fetch")
         return None
 
-    max_length: int = config.get("max_content_length", 50000)
-    delay: float = config.get("fetch_delay_seconds", 1.0)
+    max_length = int(config.get("max_content_length", 50_000))
+    max_response_bytes = int(config.get("max_response_bytes", 5_000_000))
+    delay = float(config.get("fetch_delay_seconds", 1.0))
     any_success = False
 
-    for i, url in enumerate(sorted(known_urls)):
-        # Only re-fetch URLs that haven't been fetched yet
+    for index, url in enumerate(sorted(known_urls)):
         existing = next(
-            (lnk for lnk in existing_links if lnk["original_url"] == url), None
+            (link for link in existing_links if link["original_url"] == url),
+            None,
         )
         if existing and existing.get("fetched_at") is not None:
-            logger.debug(f"Skipping already-fetched URL: {url}")
             continue
 
-        if i > 0:
+        if index > 0:
             await asyncio.sleep(delay)
 
-        logger.info(f"Fetching {url} for bookmark {bookmark_id}")
-        title, content, ctype = await _fetch_and_extract(client, url, max_length)
-
-        link = BookmarkLink(
-            bookmark_id=bookmark_id,
-            original_url=url,
-            page_title=title,
-            page_content=content,
-            content_type=ctype,
-            fetched_at=datetime.now() if (title or content) else None,
+        logger.info("Fetching %s for bookmark %s", url, bookmark_id)
+        title, content, content_type = await _fetch_and_extract(
+            client,
+            url,
+            max_length,
+            max_response_bytes,
         )
-        db.insert_link(link)
 
+        db.insert_link(
+            BookmarkLink(
+                bookmark_id=bookmark_id,
+                original_url=url,
+                page_title=title,
+                page_content=content,
+                content_type=content_type,
+                fetched_at=datetime.now() if (title or content) else None,
+            )
+        )
         if title or content:
             any_success = True
 
@@ -196,21 +302,9 @@ async def enrich_all(
     tagger=None,
     refresh: bool = False,
 ) -> EnrichResult:
-    """Enrich all bookmarks that haven't been enriched yet.
-
-    Args:
-        db:      Database instance.
-        tagger:  Optional Tagger — if provided, retag_all() is called after enrichment.
-        refresh: When True, re-fetch even bookmarks that already have enriched_at set.
-
-    Returns:
-        EnrichResult with counts of enriched / failed / skipped.
-    """
     config = _get_config()
     result = EnrichResult()
-
     bookmark_ids = db.list_bookmark_ids()
-    logger.info(f"Starting enrichment: {len(bookmark_ids)} bookmarks total")
 
     timeout = httpx.Timeout(config["fetch_timeout_seconds"])
     limits = httpx.Limits(max_connections=5, max_keepalive_connections=5)
@@ -220,8 +314,7 @@ async def enrich_all(
         timeout=timeout,
         limits=limits,
         headers=headers,
-        max_redirects=5,
-        follow_redirects=True,
+        follow_redirects=False,
     ) as client:
         for bookmark_id in bookmark_ids:
             bm_data = db.get_bookmark(bookmark_id)
@@ -229,36 +322,39 @@ async def enrich_all(
                 result.skipped += 1
                 continue
 
-            already_enriched = bm_data.get("enriched_at") is not None
-            if already_enriched and not refresh:
+            if bm_data.get("enriched_at") is not None and not refresh:
                 result.skipped += 1
                 continue
 
             try:
-                outcome = await enrich_bookmark(db, bookmark_id, client, config)
+                outcome = await enrich_bookmark(
+                    db,
+                    bookmark_id,
+                    client,
+                    config,
+                )
                 if outcome is None:
                     result.skipped += 1
                 elif outcome:
                     result.enriched += 1
                 else:
                     result.failed += 1
-            except Exception as e:
+            except Exception as exc:
                 logger.error(
-                    f"Unexpected failure enriching bookmark {bookmark_id}: {e}"
+                    "Unexpected failure enriching bookmark %s: %s",
+                    bookmark_id,
+                    exc,
                 )
                 result.failed += 1
 
-    db.rebuild_fts()
-    logger.info(
-        f"Enrichment complete: {result.enriched} enriched, "
-        f"{result.failed} failed, {result.skipped} skipped"
-    )
-
     if tagger is not None:
-        retag = tagger.retag_all(db)
-        logger.info(
-            f"Retag after enrichment: {retag.bookmarks_processed} bookmarks, "
-            f"{retag.tags_added} new tags"
-        )
+        tagger.retag_all(db)
+    db.rebuild_fts()
 
+    logger.info(
+        "Enrichment complete: %d enriched, %d failed, %d skipped",
+        result.enriched,
+        result.failed,
+        result.skipped,
+    )
     return result

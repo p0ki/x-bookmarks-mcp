@@ -218,7 +218,10 @@ class Database:
 
     def search(self, query: str, tag: str | None, limit: int) -> list[dict]:
         if self._fts_available:
-            return self._search_fts(query, tag, limit)
+            try:
+                return self._search_fts(query, tag, limit)
+            except sqlite3.OperationalError as exc:
+                logger.warning("FTS query failed, using LIKE fallback: %s", exc)
         return self._search_like(query, tag, limit)
 
     def _search_fts(self, query: str, tag: str | None, limit: int) -> list[dict]:
