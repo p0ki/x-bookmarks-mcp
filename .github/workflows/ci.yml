@@ -17,7 +17,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install linters
-        run: pip install ruff==0.16.9 black==26.5.1 isort==9.0.2
+        run: pip install ruff==0.16.9 black==26.10.1 isort==9.0.2
 
       - name: Run ruff
         run: ruff check src/ tests/
