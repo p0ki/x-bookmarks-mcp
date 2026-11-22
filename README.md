@@ -25,6 +25,24 @@ The project is intentionally small: SQLite is the source of the local index, FTS
 - **Bounded enrichment** — public HTTP(S) links only, redirect validation, response-size limits, timeouts, and content extraction.
 - **Docker + CI** — non-root container, linting, tests, coverage, dependency audit, secret scan, private-data scan, and Docker validation.
 
+## Example Session
+
+An illustrative flow in an MCP client (tool calls shown; your results depend on your own export):
+
+```text
+You:    What have I bookmarked about local LLM inference?
+Claude: search_bookmarks(query="local LLM inference", limit=10)
+        → 7 matches, incl. an enriched blog post and a long thread
+You:    Tag the three most useful ones and summarize them.
+Claude: add_tag(bookmark_id=…, tag="local-llm")  ×3
+        summarize_topic(topic="local-llm")
+        → bounded excerpts; the client writes the summary
+You:    Add a note to the first one: "try with qwen on the homelab box".
+Claude: add_note(bookmark_id=…, note="try with qwen on the homelab box")
+```
+
+Everything above runs against the local SQLite database; only optional enrichment reaches the public web.
+
 ## Security Model
 
 URL enrichment processes untrusted links, so the fetcher:
